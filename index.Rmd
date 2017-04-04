@@ -1,0 +1,110 @@
+---
+title: 'Prediction Assignment Writeup'
+author: "Guang Yang"
+date: "April 1, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Background and Goal
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Data Source
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+## Load Data and Libraries
+```{r data&lib}
+library(RCurl)
+library(caret)
+library(rattle)
+library(randomForest)
+set.seed(12345)
+UrlTrain<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+UrlTest<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+Train <- read.csv(url(UrlTrain), na.strings=c("NA","#DIV/0!",""))
+Test <- read.csv(url(UrlTest), na.strings=c("NA","#DIV/0!",""))
+```
+## Data Exploration and Preprocessing
+Split "Train" data into training and testing datasets:
+```{r split}
+InTrain<-createDataPartition(Train$classe,p = 0.7, list = FALSE)
+training<-Train[InTrain,]
+testing<-Train[-InTrain,]
+```
+In training data, remove variables with near zero variance, variables missing in more than 60% records, row index, timestamp, user name and windows indicator:
+```{r nzv}
+target<-training$classe
+CleanTrain<-training[,-c(1:7)]
+nzv <- nearZeroVar(CleanTrain, saveMetrics=TRUE)
+CleanTrain <- CleanTrain[,nzv$nzv==FALSE]
+drop_var<-list()
+for (i in names(CleanTrain)){
+  pct.na<-sum(is.na(CleanTrain[i]))/length(CleanTrain[i])
+  if(pct.na>0.6){
+    drop_var<-c(drop_var,i)
+  }
+}
+CleanTrain<-CleanTrain[,!(names(CleanTrain) %in% drop_var)]
+```
+
+Explore the target frequency to check if rare event should be considered during modeling
+```{r rare event}
+CleanTrain$classe<-target
+qplot(CleanTrain$classe)
+
+```
+
+There is no rare event issue in target and basic data cleaning has been finished. Thus the models could be built without oversampling.
+
+## Modeling
+
+### Decision Tree Model
+For simplicity, first build a decision tree model and use cross validation to estimate the out of sample error.
+```{r decision tree}
+set.seed(12345)
+trCtrl<- trainControl(method = "cv",number=5)
+modTree<-train(classe~.,data=CleanTrain,method="rpart",trControl=trCtrl)
+
+print(modTree)
+fancyRpartPlot(modTree$finalModel)
+
+predTree<-predict(modTree,newdata=testing)
+cfmTree<-confusionMatrix(predTree,testing$classe)
+plot(cfmTree$table, col = cfmTree$byClass, main = paste("Decision Tree Confusion Matrix: Accuracy =", round(cfmTree$overall['Accuracy'], 4)))
+```
+
+Based on accuracy estimated through cross validation, the out of sample accuracy would be 0.48, thus the out of sample error would be 0.52. Actually, based on the model performance on the testing dataset, the out of sample accuracy is 0.50 thus the out of sample error would be 0.50
+
+### Random Forest Model
+The performance of decision tree model is not satisfying enough. More advanced model like random forest should be considered.
+```{r rf}
+modRF<-train(classe~.,data=CleanTrain,method="rf",trControl=trCtrl)
+
+print(modRF)
+
+predRF<-predict(modRF,newdata=testing)
+cfmRF<-confusionMatrix(predRF,testing$classe)
+plot(cfmRF$table, col = cfmRF$byClass, main = paste("Random Forest Confusion Matrix: Accuracy =", round(cfmRF$overall['Accuracy'], 4)))
+```
+
+Based on accuracy estimated through cross validation, the out of sample accuracy would be 0.99, thus the out of sample error would be 0.01. Actually, based on the model performance on the testing dataset, the out of sample accuracy is 0.989 thus the out of sample error would be 0.011.
+
+## Prediction on final "Test" dataset
+```{r predict}
+print(predict(modRF,newdata=Test))
+```
